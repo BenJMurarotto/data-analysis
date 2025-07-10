@@ -1,0 +1,56 @@
+
+## Exploratory analysis.
+
+```{r}
+df <- read.csv("Spinner_Dolphin.csv", header = T)
+names(df)
+head(df)
+```
+```{r}
+summary(df)
+```
+
+
+```{r}
+library(ggplot2)
+df$Whistle <- as.factor(df$Whistle)
+ggplot(df, aes(x = Whistle, y = Duration)) + geom_boxplot()
+
+```
+
+
+```{r}
+library(ggcorrplot)
+corr_matrix <- cor(num.df)
+ggcorrplot(corr_matrix,
+           method = "square",
+           lab = TRUE,
+           lab_size = 3,  
+           lab_col = "black",   
+           hc.order = TRUE,
+           type = "upper",
+           tl.cex = 10,  
+           digits = 3,
+           title = "Correlation Matrix for Numerical Variables",
+           show.legend = TRUE)
+```
+
+
+```{r}
+ggplot(df, aes(x = Whistle, y = Max_Freq)) + geom_boxplot()
+```
+
+```{r}
+num.df <- subset(df, select = -1)
+scale.df <- scale(num.df)
+```
+
+```{r}
+pr.out <- prcomp(scale.df, scale = TRUE)
+pr.out$rotation
+```
+
+```{r}
+biplot(pr.out, scale = 0)
+```
+

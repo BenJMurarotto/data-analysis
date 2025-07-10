@@ -1,0 +1,374 @@
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+#copied from original assignment
+whistle_desc <- data.frame(
+  Variable = c("Whistle", "Duration", "Centre Freq", "Low Freq", "Delta Freq",
+               "Max Freq", "Range 50", "Range 100", "Inflections"),
+  Description = c("Whistle classification (Concave, Constant, Convex, Downsweep, Sine or Upsweep)",
+                  "The time span of the whistle (seconds)",
+                  "The frequency recorded at the midpoint (centre) of the whistle (kHz)",
+                  "The lowest frequency recorded during a whistle (kHz)",
+                  "The range in frequency recorded during a whistle (kHz)",
+                  "Maximum frequency (kHz) recorded during a whistle",
+                  "Centre frequency minus minimum frequency",
+                  "Maximum frequency minus centre frequency",
+                  "Number of points of change in whistle curvature")
+)
+
+kable(whistle_desc, caption = "Whistle Variable Descriptions", booktabs = TRUE, align = "l") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+
+```
+
+```{r}
+
+#import dataset
+df <- read.csv("Spinner_Dolphin.csv", header = T)
+names(df)
+head(df)
+```
+
+```{r}
+#checking inflection range
+
+unique(df$Inflections)
+```
+```{r}
+#df$Inflections <- as.factor(df$Inflections)
+```
+
+
+```{r}
+
+# didnt end up using this 
+library(ggplot2)
+df$Whistle <- as.factor(df$Whistle)
+ggplot(df, aes(x = Whistle, y = Duration)) + geom_boxplot()
+
+```
+
+
+```{r}
+num.df <- subset(df, select = -1)
+```
+
+
+
+```{r, warning=FALSE}
+
+
+library(ggcorrplot)
+corr_matrix <- cor(num.df)
+ggcorrplot(corr_matrix,
+           method = "square",
+           lab = TRUE,
+           lab_size = 3,  
+           lab_col = "black",   
+           hc.order = TRUE,
+           type = "upper",
+           tl.cex = 10,  
+           digits = 3,
+           title = "Correlation Matrix for Numerical Variables",
+           show.legend = TRUE)
+```
+
+
+```{r}
+
+
+ggplot(df, aes(x = Inflections, fill = Whistle)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Duration by Whistle Class",
+       x = "Duration (seconds)",
+       y = "Density") +
+  theme_minimal()
+```
+
+
+
+```{r}
+pr.out <- prcomp(num.df, scale = TRUE)
+pr.out$rotation[, 1:4]
+```
+
+
+```{r}
+summary(pr.out)
+## create cumulative stats for scree plot
+pca_var <- pr.out$sdev^2
+prop_var <- pca_var / sum(pca_var)
+cum_var <- cumsum(prop_var)
+
+```
+
+```{r}
+plot(cum_var, type = "b", pch = 19,
+     xlab = "Principal Component",
+     ylab = "Cumulative Proportion of Variance Explained",
+     main = "Cumulative Variance Explained by PCA",
+     ylim = c(0, 1))
+abline(h = 0.7, col = "red", lty = 2) 
+```
+
+
+```{r}
+biplot(pr.out, scale = 0)
+```
+
+```{r}
+library(class)
+
+#features <- df[, c("Duration", "Delta_Freq", "Inflections", "Center_Freq")]
+features <- df[, c("Duration", "Max_Freq", "Inflections", "Center_Freq", "Low_Freq")]
+labels <- df$Whistle
+
+# euclidean distance
+scaled_features <- scale(features)
+
+# put back into df
+df_scaled <- data.frame(scaled_features)
+df_scaled$Whistle <- labels
+```
+
+
+
+
+```{r}
+## using 70/30 split
+set.seed(7)
+train_idx <- sample(1:nrow(df_scaled), 0.7 * nrow(df_scaled))
+train_set <- df_scaled[train_idx, ]
+test_set <- df_scaled[-train_idx, ]
+```
+
+```{r}
+k_values <- 1:20
+accuracy <- numeric(length(k_values))
+
+# for loop to test k values create predictions and store mean acc for each i
+for (i in k_values) {
+  pred <- knn(train = train_set[, 1:4],
+              test = test_set[, 1:4],
+              cl = train_set$Whistle,
+              k = i)
+  
+  accuracy[i] <- mean(pred == test_set$Whistle)
+}
+
+```
+
+
+```{r}
+plot(k_values, accuracy, type = "b", pch = 19,
+     xlab = "K",
+     ylab = "Accuracy",
+     main = "KNN Accuracy for Varying K")
+
+```
+
+
+```{r}
+best_k <- which.max(accuracy)
+best_k
+accuracy[best_k]
+```
+
+```{r}
+#caret library for tuning 
+library(caret)
+pred_knn <- knn(train = train_set[, 1:4],
+                test = test_set[, 1:4],
+                cl = train_set$Whistle,
+                k = best_k)
+conf_mat <- confusionMatrix(pred_knn, test_set$Whistle)
+cm_df <- as.data.frame(conf_mat$table)
+
+## confusion matrix
+ggplot(cm_df, aes(Prediction, Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white") +
+  labs(title = paste("Confusion Matrix for KNN (k =", best_k, ")")) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  theme_minimal()
+```
+
+```{r}
+library(randomForest)
+
+# rf_data <- df[, c("Whistle", "Duration", "Delta_Freq", "Inflections", "Center_Freq")]
+rf_data <- df
+
+set.seed(123)
+train_idx <- sample(1:nrow(rf_data), 0.7 * nrow(rf_data))
+train_rf <- rf_data[train_idx, ]
+test_rf <- rf_data[-train_idx, ]
+
+
+ntree_values <- c(100, 200, 300, 400, 500)
+accuracy <- numeric(length(ntree_values))
+
+
+for (i in seq_along(ntree_values)) {
+  rf_model <- randomForest(Whistle ~ ., data = train_rf, ntree = ntree_values[i])
+  predictions <- predict(rf_model, newdata = test_rf)
+  accuracy[i] <- mean(predictions == test_rf$Whistle)
+}
+
+
+results <- data.frame(ntree = ntree_values, Accuracy = accuracy)
+print(results)
+
+
+plot(results$ntree, results$Accuracy, type = "b", pch = 19,
+     xlab = "Number of Trees", ylab = "Accuracy",
+     main = "Random Forest Accuracy Across ntree")
+
+
+```
+```{r}
+train_control <- trainControl(method = "cv", number = 5) #5 cv folds
+
+#tune grid to adjust mtry
+tune_grid <- expand.grid(mtry = c(1, 2, 3, 4, 5))  
+
+
+rf_tuned <- train(
+  Whistle ~ .,
+  data = train_rf,
+  method = "rf",
+  trControl = train_control,
+  tuneGrid = tune_grid,
+  ntree = 200  # use best number of trees from earlier
+)
+
+
+print(rf_tuned)
+plot(rf_tuned)
+```
+
+
+```{r}
+varImpPlot(rf_model, main = "Variable Importance")
+
+```
+
+
+
+```{r}
+final_rf <- rf_tuned$finalModel
+preds <- predict(rf_tuned, newdata = test_rf)
+mean(preds == test_rf$Whistle)  # test set accuracy
+
+```
+
+```{r}
+
+conf_mat <- confusionMatrix(preds, test_rf$Whistle)
+print(conf_mat)
+
+conf_mat$overall["Accuracy"]
+rf_df <- as.data.frame(conf_mat$table)
+
+
+## copy copy
+ggplot(rf_df, aes(Prediction, Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white") +
+  labs(title = paste("Confusion Matrix for RF Predictions")) +
+  scale_fill_gradient(low = "darkkhaki", high = "forestgreen") +
+  theme_minimal()
+```
+
+```{r}
+library(e1071)
+library(dplyr)
+# df[, c("Duration", "Delta_Freq", "Inflections", "Center_Freq")]
+# df[, c("Duration", "Max_Freq", "Inflections", "Center_Freq", "Low_Freq")]
+svm_df <- num.df
+svm_data <- scale(svm_df)           
+svm_data <- as.data.frame(svm_data)      
+svm_data$Whistle <- df$Whistle
+
+
+## restating the df for svm and incorporating all variables.
+
+train_idx <- sample(1:nrow(svm_data), 0.7 * nrow(svm_data))
+train_svm <- svm_data[train_idx, ]
+test_svm <- svm_data[-train_idx, ]
+```
+
+
+```{r}
+
+# the basic range of kernels to test
+
+kernels <- c("linear", "polynomial", "radial", "sigmoid")
+accuracies <- numeric(length(kernels))
+
+#copied this code from previous assignment
+
+for (i in seq_along(kernels)) {
+  model <- svm(Whistle ~ ., 
+               data = train_svm, 
+               kernel = kernels[i],
+               cost = 1, gamma = 0.1) # conservative placeholder variables will tweak 
+  #later
+
+  pred <- predict(model, newdata = test_svm)
+  accuracies[i] <- mean(pred == test_svm$Whistle)
+}
+
+
+kernel_results <- data.frame(Kernel = kernels, Accuracy = accuracies)
+
+ggplot(kernel_results, aes(x = Kernel, y = Accuracy, fill = Kernel)) +
+  geom_bar(stat = "identity") +
+  labs(title = "SVM Kernel Comparison on Whistle Classification",
+       x = "Kernel Type", y = "Accuracy") +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.05)
+  )
+  theme_minimal()
+ 
+```
+
+
+```{r}
+
+gamma_values <- 2^(-5:1)  #range of gamma
+cost_values <- 0.1:2:0.2        #range of cost
+
+tuned_model <- tune(
+  svm,
+  Whistle ~ .,                    
+  data = train_svm,             
+  kernel = "linear",
+  ranges = list(gamma = gamma_values, cost = cost_values),
+  tunecontrol = tune.control(cross = 5)
+)
+
+summary(tuned_model)
+```
+
+```{r}
+#defining my final model for predictions
+final_svm <- tuned_model$best.model
+svm_pred <- predict(model, newdata = test_svm)
+cm_mat<- confusionMatrix(data = svm_pred, reference = test_svm$Whistle)
+cm_df <- as.data.frame(cm_mat$table)
+
+cm_mat$overall["Accuracy"]
+
+ggplot(cm_df, aes(Prediction, Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white") +
+  labs(title = paste("Confusion Matrix for SVM with linear kernel")) +
+  scale_fill_gradient(low = "grey", high = "grey2") +
+  theme_minimal()
+```
+

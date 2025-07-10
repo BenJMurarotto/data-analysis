@@ -1,0 +1,199 @@
+---
+title: "STAT410 Assignment 3"
+author: "Ben Murarotto"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+    toc: true
+    number_sections: true
+    highlight: tango
+header-includes:
+  - \usepackage{xcolor}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+geometry: margin=0.75in
+---
+
+
+# Soil dataset.
+
+Cadmium exposure in pregnant women can lead to increased risk of birth defects in foetuses (Geng & Wang 2019). Diet is one of the main sources of human exposure to Cadmium with rice identified as one of the main contributors. A study1 has been undertaken to explore the components in soil which can be used to predict Cadmium accumulation in Rice. 18 soil samples were collected from different rice fields and a number of factors were recorded from each soil sample. The data set, soil.csv, contains 12 variables:
+- Soil: Unique identifier from where the soil was collected. This factor should not be used in the modelling.
+- pH: the pH of the soil.
+- SOM: the organic matter in the soil (g/kg)
+- EC: the electrical conductivity of the soil (ms/cm)
+- Clay: the amount of clay in the soil (g/kg)
+- Fe: iron in the soil (g/kg)
+- TN: total nitrogen in the soil (g/kg)
+- Mn: MnO content (g/kg)
+- TP: Total phosphorus (g/kg)
+- CEC: Cation exchange (cmol/kg)
+- AL: aluminium in the soil (g/kg)
+- Cd: the amount of cadmium extracted from the rice plants (mg/kg) which is the response variable.
+
+```{r}
+soil.df<-read.csv("soil.csv", header=T)
+
+summary(soil.df)
+head(soil.df, 3)
+
+```
+
+## Exploratory analysis
+Using the ggpairs() function to plot the data let's assess correlations between the predictors and the response variable and any correlations between the predictors.
+
+```{r, message=F}
+library(GGally)
+library(ggplot2)
+
+ggpairs(
+  soil.df, columns= 2:12,
+  upper = list(continuous = wrap("cor", size = 3, method = "pearson"))
+)
+
+```
+
+Assessing the GGpairs plots we notice a few things:
+  1. Outliers - namely in the TN variable there are two observations that create high leverage when plotted with other variables
+  2. Correlations - Variables TP and TN have a strong negative correlation (-0.605). The response variable Cd has a moderately strong correlation with Mn (0.538) and pH (0.463). pH seems to also have correlation with multiple heavy metal factors such as Al and Fe. SOM and Mn are strongly negatively correlated (-0.692).
+  
+## Fitting main effects.
+
+Here we are going to fit a main effects (first order) model using all the soil factors (excluding the sample identifier, Soil). Using the car library we will check the four indicators of multicollinearity between your predictors. 
+```{r}
+mod1 <- lm(data = soil.df, Cd~pH + EC + SOM + Clay + Fe + TN + Mn + TP + CEC + Al)
+summary(mod1)
+```
+
+
+```{r}
+library(car)
+vif(mod1)
+```
+Lets remove TP and TN from our model due to their high VIF score and correlation with each other whilst having low correlation with the response. We will also remove SOM and as it has a high VIF. Mn and pH will stay in our final model as it explains a lot of the response and is correlated with other variables which we could remove.
+Let's fit a second main effects model using Mn, EC, pH and Fe.
+
+```{r}
+mod2 <- lm(data=soil.df, Cd ~ Mn + EC + pH + Fe)
+summary(mod2)
+vif(mod2)
+```
+
+```{r}
+mod3<-lm(data=soil.df, Cd~(Mn + EC + pH + Fe)^2 + I(Mn^2) + I(pH^2) + I(EC^2) + I(Fe^2))
+summary(mod3)
+anova(mod3)
+```
+
+```{r}
+mod4<-lm(data=soil.df, Cd ~ Mn + EC + pH + Fe + I(EC^2) + I(Fe^2) + Mn:EC + pH:Fe)
+summary(mod4)
+```
+```{=latex}
+\begin{align*}
+\hat{Cd} =\ & 0.2342 - 0.0805 \cdot \text{Mn} + 1.6725 \cdot \text{EC} 
+- 0.0006 \cdot \text{pH} - 0.0314 \cdot \text{Fe} \\
+& - 7.1327 \cdot \text{EC}^2 + 0.0011 \cdot \text{Fe}^2 \\
+& + 1.9677 \cdot (\text{Mn} \cdot \text{EC}) 
++ 0.0006 \cdot (\text{pH} \cdot \text{Fe})
+\end{align*}
+```
+
+
+```{r}
+formL<-formula(~1, data=soil.df)
+formU<-formula(Cd~(Mn + EC + pH + Fe)^2 + I(Mn^2) + I(pH^2) + I(EC^2) + I(Fe^2))
+start.mod.b<-mod3
+step.mod.b<-step(start.mod.b,
+                 direction = "backward",
+                 scope = list(lower=formL, upper=formU))
+
+
+```
+
+Backward stepwise model selection was performed using the complete second order model for predictors Mn, EC, pH, and Fe. The null model was defined as the intercept only model, and the upper model included all linear, quadratic plus two way interaction terms. Using AIC, one term (I(Mn^2)) was removed, improving the AIC from –206.38 to –207.02. The adjusted R squared of the final model remained extremely high, indicating an excellent fit while slightly simplifying the model. The final regression equation includes the effects of Mn, EC, pH, Fe, and their nonlinear and interactions.
+
+```{r}
+summary(step.mod.b)
+```
+```{=latex}
+\begin{align*}
+\hat{Cd} =\ & 0.2342 - 0.0805 \cdot \text{Mn} + 1.6725 \cdot \text{EC} 
+- 0.0006 \cdot \text{pH} - 0.0314 \cdot \text{Fe} \\
+& - 7.1327 \cdot \text{EC}^2 + 0.0011 \cdot \text{Fe}^2 \\
+& + 1.9677 \cdot (\text{Mn} \cdot \text{EC}) 
++ 0.0006 \cdot (\text{pH} \cdot \text{Fe})
+\end{align*}
+```
+
+## Stepwise model versus simplified second order model.
+
+```{r}
+summary(mod4)
+cat("AIC simplified second order: ", AIC(mod4),"\n")
+cat("Adj R squared simp second order: ", summary(mod4)$adj.r.squared,"\n")
+
+summary(step.mod.b)
+cat("AIC stepwise: ", AIC(step.mod.b), "\n")
+cat("Adj R squared stepwise: ", summary(step.mod.b)$adj.r.squared, "\n")
+```
+
+
+To determine the best model for predicting cadmium concentration in rice, both the simplified second-order model and the stepwise-selected model were evaluated. The stepwise model had a significantly lower AIC (–153.94 vs –51.54), a much higher adjusted R squared (0.9986 vs 0.688). Additionally, all 13 terms in the stepwise model were highly statistically significant (p < 0.01), compared to only 3–4 in the simplified model. Therefore, the stepwise model was selected as the final model due to its superior statistical performance and predictive accuracy.
+
+
+## Assessing model assumptions
+
+```{r}
+library(ggResidpanel)
+resid_panel(step.mod.b, plots=c("resid","qq","ls","cookd","lev"))
+```
+
+Residual diagnostics were conducted to assess whether the 5 assumptions of multiple linear regression were met for the final model. The residuals fitted plot shows no clear patterns, indicating that the assumptions of linearity and constant variance are satisfied. The Normal Q-Q plot demonstrates that the residuals were approximately normally distributed. The scale-location plot has a dip in variability toward the center indicative of a U-shape. This gives evidence AGAINST homoscedasticity. The residuals vs leverage plot revealed a cluster of observations with very high leverage, some exceeding 0.9. These points lie close to or beyond the Cook's Distance threshold lines, indicating they may be exerting significant influence our coefficients. 
+
+## Model summary
+
+The final multiple linear regression model selected through backward stepwise selection achieving an adjusted R squared of 0.9986 and a highly significant overall p-value (p < 0.001). While the model fits the data extremely well, residual diagnostics revealed potential violations of the constant variance assumption and the presence of influential observations. Therefore, while the model demonstrates strong predictive power within the current dataset, caution should be taken when generalising to new data and making predictions.
+
+
+# Cadmium Dataset
+Rhizospheric soil microbes can have profound effects on plants in Cadmium contaminated soils. Abundance of saprotrophic soil fungi have been found to reduce cadmium accumulation in plant tissues (Cakmak et al., 2023). Wang et al. (2024) conducted an experiment to determine if the soil fungi, Basidiomycota, affected cadmium accumulation in a cadmium hyperaccumulator plant, Black-jack (Bidens Pilosa).
+
+The dataset Cadmium.csv, contains 3 Variables:
+- Shoot_Cd: Cadmium concentration in the stems and leaves of Bidens Pilosa (mg/kg)
+- Soil_Cd: Cadmium concentration in the soil (mg/kg)
+- Basid: Relative abundance of the soil fungus, Basidiomycota (%)
+
+
+```{r}
+cad.df <- read.csv("Cadmium.csv", header=T)
+head(cad.df)
+```
+
+## Fitting second order.
+We will fit a second order model and check the summary.
+
+```{r}
+mod1.1<-lm(data = cad.df, Shoot_Cd ~ Soil_Cd * Basidiomycota + I(Soil_Cd^2) + I(Basidiomycota^2))
+summary(mod1.1)
+```
+Here we see that the model is significant but the adjusted R-squared is low meaning our model may not be a strong candidate for prediction. Now we will check the assumptions of our model.
+
+## Assessing the assumptions of linear regression.
+
+```{r}
+resid_panel(mod1.1, plots=c("resid","qq","ls","cookd","lev"))
+```
+The residuals fitted plot suggested that the linearity assumption was generally upheld; however, one extreme outlier with a large positive residual was present. The QQ plot revealed significant deviation from the theoretical line in both tails, particularly the upper tail. The outlier also appeared here in the Scale Location plot, impacting the spread and slightly undermining the homoscedasticity assumption. The Cook’s Distance plot confirmed that the single observation had a markedly higher Cook’s D (~0.2).
+
+## Applying a Box-Cox transformation.
+
+```{r}
+library(MASS)
+cad.bc <- boxcox(mod1.1, lambda = seq(-1, 1, 0.01))
+
+lambda_val <- cad.bc$x[which.max(cad.bc$y)]
+lambda_val
+```
+Since lambda = -0.1 which is closest to zero we do a log transformation. We do not choose other transformations because they fell outside of the 95% CI of the box cox profile. Applying the wrong transformation would not normalise the distribution of the residuals and create more issues for our assumptions.

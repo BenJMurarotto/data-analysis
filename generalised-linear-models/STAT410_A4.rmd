@@ -1,0 +1,322 @@
+---
+title: 'STAT410 Assignment 4: Generalised Linear Models'
+author: "Ben Murarotto"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    toc: true
+    number_sections: true
+    highlight: tango
+  word_document:
+    toc: true
+header-includes:
+- \usepackage{xcolor}
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+geometry: margin=0.75in
+---
+# Hypertension dataset.
+
+*Does smoking or drinking change the probability of having hypertension and do these probabilities change depending on gender and/or age brackets?*
+
+*Gender:* gender of participant at time of study. 2 levels; 1 (Male) and 2 (Female)
+*Age:* Age bracket. 4 levels; 1 (20-34), 2 (35-49), 3 (50-64), 4 (>65).
+*Drink:* If participant had at least 12 drinks/year. 2 levels; 0 (No), 1 (Yes). ONLY in Hyper_Drink.csv
+*Hypertension:* Counts of participants that had either been diagnosed with hypertension or if the participant had systolic blood pressure levels $\geq$ 130 mm Hg and/or diastolic blood pressure levels $\geq$ 80 mm Hg.
+*Total:* Total number of participants for that Gender-Age-Cotinine/Drink combination.
+
+To begin the analysis let's determine the proportions of participants with hypertension for each combination of gender, age, and drinking status. This provides an initial understanding of how hypertension prevalence differs across demographic groups.
+We will then attempt to make two visualisations to explore potential interactions.
+
+
+```{r}
+drink.df <- read.csv("Hyper_Drink.csv", header = T)
+
+drink.df$Gender <- factor(drink.df$Gender, levels = c(1, 2), labels = c("Male", "Female"))
+drink.df$Age <- factor(drink.df$Age, levels = c(1, 2, 3, 4), labels = c("20-34", "35-49", "50-64", "65+"))
+drink.df$Drink <- factor(drink.df$Drink, levels = c(0, 1), labels = c("Non-Drinker", "Drinker"))
+```
+
+
+```{r}
+library(dplyr)
+
+drink.df %>%
+  group_by(Gender) %>%
+  summarise(
+    Total = sum(Total),
+    Hypertension = sum(Hypertension),
+    Proportion = Hypertension / Total
+  )
+
+```
+
+
+```{r}
+drink.df %>%
+  group_by(Age) %>%
+  summarise(
+    Total = sum(Total),
+    Hypertension = sum(Hypertension),
+    Proportion = Hypertension / Total
+  )
+```
+
+
+```{r}
+drink.df %>%
+  group_by(Drink) %>%
+  summarise(
+    Total = sum(Total),
+    Hypertension = sum(Hypertension),
+    Proportion = Hypertension / Total
+  )
+```
+
+
+```{r}
+library(ggplot2)
+
+ggplot(drink.df, aes(
+  x = Hypertension / Total,
+  y = Age,
+  color = Drink,
+  group = Drink
+)) +
+  geom_point(size = 2) +
+  labs(
+    title = "Hypertension rate by Age",
+    y = "Age Group",
+    x = "Proportion with Hypertension",
+    color = "Drinker Status"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+The proportion of hypertension increases with age. Non drinkers show slightly higher rates of hypertension in older age groups.
+
+
+```{r}
+ggplot(drink.df, aes(
+  x = Hypertension / Total,
+  y = Gender,
+  color = Drink,
+  group = Drink
+)) +
+  geom_point(size = 2) +
+  labs(
+    title = "Hypertension rate by Gender",
+    y = "Gender",
+    x = "Proportion with Hypertension",
+    color = "Drinker Status"
+  ) +
+  theme_minimal()
+
+```
+
+Looking at both the table and the plots both genders exhibit increased hypertension with age, males generally have higher proportions of hypertension compared to females. The effect of drinking varies by gender, with a slightly stronger association in males.
+
+## Choosing a GLM.
+The response variable in this research question is binomially distributed, either the patient has hypertension or does not. Therefore, a binomial family GLM plus a logit link function is appropriate.
+
+```{r}
+model <- glm(cbind(Hypertension, Total - Hypertension) ~ Gender + Age + Drink + 
+               Gender:Drink + Age:Drink,
+             data = drink.df,
+             family = binomial(link = "logit"))
+
+summary(model)
+```
+
+## Using stepwise regression.
+Lets fit a second order interaction GLM  using step() in both directions.
+
+
+```{r}
+upper_model <- glm(cbind(Hypertension, Total - Hypertension) ~ 
+                     (Gender + Age + Drink)^2, 
+                   data = drink.df, 
+                   family = binomial(link = "logit"))
+
+final_model <- step(upper_model, direction = "both")
+summary(final_model)
+```
+
+Our stepwise model kept all main effects and several interactions. When comparing coefficients of levels of our qualitative predictors we notice several things.
+Being female is associated with significantly lower odds of hypertension.
+Age is a strong predictor, with risk of hypertension increasing with age.
+Interaction effects confirm our suspicions that the influence of drinking and age on hypertension differs between genders and across age groups.
+
+
+## Understanding residual deviance.
+
+```{r}
+anova(final_model, test="Chisq")
+pchisq(df=3, q=1.7248, lower.tail = F)
+```
+The hypothesis testing for the chi-square test is as follows:
+
+$$
+\text{H0: The model fits well (no lack of fit).}
+$$
+$$
+\text{HA: The model does not fit well.}
+$$
+
+The p-value 0.631 for the chi square test in this instance we fail to reject the null hypothesis and accept that the model is a good fit.
+
+## Final summary.
+Drinking has a notable influence on the likelihood of having hypertension. In the analysis of deviance, the main effect of drinking was statistically significant (Deviance = 23.75, p = 1.095 × 10e-6), showing that drinking status contributes meaningfully to the model. Additionally, its impact isn’t necessarily consistent across the board, the effect of drinking changes depending on both age and gender. This is reflected in the retention of the Age:Drink interaction (Deviance = 6.97, p = 0.073) and the Gender:Drink interaction (Deviance = 3.72, p = 0.054) in the final stepwise selected model. While these interactions are only marginally significant, their inclusion suggests that drinking affects hypertension risk differently for different age and gender groups.
+
+# Diabates dataset.
+1.2 million adults in USA are diagnosed with diabetes each year *(American Diabetes Association 2025)*. Complications can arise in a number of organ systems due to diabetes, severely impacting quality of life. Researchers want to understand what some important risk factors of diabetes are. The research questions is:
+How does gender, age, income, BMI and other disorders influence the probability of having diabetes?
+The data is stored in Diabetes.csv and consists of variables:
+- *Seqn*: Unique sequence number from participant.
+- *Gender*: gender of participant at time of study. 2 levels; 1 (Male) and 2
+(Female)
+- *Age*: Age bracket. 4 levels; 1 (20-34), 2 (35-49), 3 (50-64), 4 (>65).
+- *PIR*: Ratio of family income to poverty. Calculated by dividing family (or
+individual) income by the poverty threshold specific to each survey year.
+Values above 1 indicate the individual is above the poverty threshold and
+values below 1 indicate they are below the poverty threshold.
+- *BMI*: Body mass index. 3 levels; 1 (<25, normal weight), 2 (25-30, overweight), 3 (<30, obese).
+- *Diabetes*: Whether the participant had been diagnosed with diabetes or if the participant had high glucose.
+- *Nocturia*: Whether the participant was deemed to experience nocturia. 
+- *Hypertension*: Whether the participant had been diagnosed with hypertension or elevated BP.
+
+```{r}
+diabetes.df <- read.csv("Diabetes.csv", header = T)
+diabetes.df$Gender <- factor(diabetes.df$Gender, levels = c(1, 2), labels = c("Male", "Female"))
+diabetes.df$Age <- factor(diabetes.df$Age, levels = c(1, 2, 3, 4), labels = c("20-34", "35-49", "50-64", "65+"))
+diabetes.df$BMI <- factor(diabetes.df$BMI, levels = c(1, 2, 3), labels = c("Normal", "Overweight", "Obese"))
+diabetes.df$Nocturia <- factor(diabetes.df$Nocturia, levels = c(0, 1), labels = c("No", "Yes"))
+diabetes.df$Hypertension <- factor(diabetes.df$Hypertension, levels = c(0, 1), labels = c("No", "Yes"))
+
+
+set.seed(7)
+sample <- diabetes.df%>%sample_n(200)
+df <- subset(sample, select = -seqn)
+db.glm <- glm(data = df, Diabetes~., family="binomial"(link="logit"))
+summary(db.glm)
+```
+
+$$
+\begin{aligned}
+\log\left(\frac{p}{1 - p}\right) =\ 
+& -3.42 
+- 0.62 \cdot \text{Gender}_{\text{Female}} 
++ 0.80 \cdot \text{Age}_{35\text{--}49} 
++ 1.40 \cdot \text{Age}_{50\text{--}64} 
++ 2.31 \cdot \text{Age}_{65+} \\
+& - 0.15 \cdot \text{PIR} 
++ 0.36 \cdot \text{BMI}_{\text{Overweight}} 
++ 1.78 \cdot \text{BMI}_{\text{Obese}} 
++ 0.93 \cdot \text{Nocturia}_{\text{Yes}} 
++ 0.63 \cdot \text{Hypertension}_{\text{Yes}}
+\end{aligned}
+$$
+
+
+
+
+
+
+```{r}
+anova(db.glm, test="Chisq")
+pchisq(df=190, q=177.94, lower.tail = F)
+
+```
+
+Like in our previous dataset, the goodness of fit test p-value is large therefore we do not reject our null hypothesis and we can say that this model is a good fit for the data.
+
+## Determining odds ratio.
+
+Let's calculate the CI range of odds ratios for each of the predictors of the main effects model. This will give us a better understanding of our predictor weights.
+
+```{r}
+odds <- exp(coef(db.glm))
+odds.conf <- exp(confint(db.glm))
+
+odds.df <- data.frame(
+  CI_Lower = round(odds.conf[, 1], 3),
+  Odds_Ratio = round(odds, 3),
+  CI_Upper = round(odds.conf[, 2], 3)
+)
+
+odds.df
+
+```
+
+When interpreting CI intervals in logistic regression, we remember that it indicates the range of values within which the true odds ratio is likely to fall if the CI excludes 1, the effect is considered statistically significant.
+
+Among all significant predictors, older age 65+, obesity, and nocturia were significantly associated with increased odds of diabetes. Age 65+ had the strongest effect, with participants in this age group experiencing 10 times higher odds compared  20–34 age group.
+
+## Making predictions.
+
+Let's now use our main effects model to make a prediction with some new data.
+
+
+```{r}
+newdata.pred <- data.frame(
+  Gender = factor("Male", levels = levels(df$Gender)),
+  Age = factor("35-49", levels = levels(df$Age)),
+  PIR = 1.7,
+  BMI = factor("Normal", levels = levels(df$BMI)),
+  Nocturia = factor("Yes", levels = levels(df$Nocturia)),
+  Hypertension = factor("Yes", levels = levels(df$Hypertension))
+)
+```
+
+```{r}
+pred <- predict(db.glm, newdata = newdata.pred, type = "link", se.fit = TRUE)
+
+fit <- pred$fit
+lwr <- fit - 1.96 * pred$se.fit
+upr <- fit + 1.96 * pred$se.fit
+
+prob <- plogis(fit)
+lower_prob <- plogis(lwr)
+upper_prob <- plogis(upr)
+
+range <- c(Probability = prob, Lower_CI = lower_prob, Upper_CI = upper_prob)
+range
+```
+
+With 95% confindence we can say that the probability of a 35-49 year old male with hypertension, nocturia and a PIR of 1.7 and normal BMI lies between 6% and 52%.
+
+## Visualisiing PIR and Gender.
+Let's visualise how gender and poverty affect diabetes risk. We need to create a set of predictions of diabetes using the fitted GLM across a range of PIR and then compare the genders.
+
+```{r}
+newdata <- expand.grid(
+  Gender = factor(c("Male", "Female"), levels = levels(df$Gender)),
+  Age = factor("35-49", levels = levels(df$Age)),
+  PIR = seq(0.5, 5, 0.05),
+  BMI = factor("Normal", levels = levels(df$BMI)),
+  Nocturia = factor("Yes", levels = levels(df$Nocturia)),
+  Hypertension = factor("Yes", levels = levels(df$Hypertension))
+)
+
+newdata$fit_prob <- predict(db.glm, newdata = newdata, type = "response")
+
+
+ggplot(newdata, aes(x = PIR, y = fit_prob, color = Gender)) +
+  geom_line(size = 1.5) +
+  labs(
+    title = "Probability of Diabetes by PIR and Gender",
+    x = "PIR",
+    y = "Probability of Diabetes",
+    color = "Gender"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+Our plot shows a clear negative relationship between PIR and probability of diabetes. People with higher PIR earn more relative to the poverty line tend to have a lower risk of diabetes. This pattern holds for both men and women, although men consistently have higher predicted probabilities of diabetes than women at every PIR level. Overall, the results suggest that socioeconomic status, as measured by PIR, plays an important role in diabetes risk.

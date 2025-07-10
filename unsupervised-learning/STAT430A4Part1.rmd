@@ -1,0 +1,291 @@
+---
+title: 'STAT430 Assignment 4: Unsupervised Learning'
+author: "Ben Murarotto"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    toc: true
+    number_sections: true
+    highlight: tango
+  word_document:
+    toc: true
+header-includes:
+- \usepackage{xcolor}
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+geometry: margin=0.75in
+---
+
+# Spinner dolphins dataset.
+
+Spinner dolphins are small delphinids that reside in subtropical and tropical waters. Data
+were collected on spinner dolphins in Fiji to explore the characteristics of their whistles.
+The type of whistle (e.g., concave, constant, convex, downsweep, sine, and upsweep) along
+with a variety of other acoustic properties of individual whistles was measured and is
+summarised in the Spinner dolphin dataset.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Create the whistle variable description table
+whistle_desc <- data.frame(
+  Variable = c("Whistle", "Duration", "Centre Freq", "Low Freq", "Delta Freq",
+               "Max Freq", "Range 50", "Range 100", "Inflections"),
+  Description = c("Whistle classification (Concave, Constant, Convex, Downsweep, Sine or Upsweep)",
+                  "The time span of the whistle (seconds)",
+                  "The frequency recorded at the midpoint (centre) of the whistle (kHz)",
+                  "The lowest frequency recorded during a whistle (kHz)",
+                  "The range in frequency recorded during a whistle (kHz)",
+                  "Maximum frequency (kHz) recorded during a whistle",
+                  "Centre frequency minus minimum frequency",
+                  "Maximum frequency minus centre frequency",
+                  "Number of points of change in whistle curvature")
+)
+
+kable(whistle_desc, caption = "Whistle Variable Descriptions", booktabs = TRUE, align = "l") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+## Exploratory analysis.
+
+```{r}
+df <- read.csv("Spinner_Dolphin.csv", header = T)
+names(df)
+head(df)
+```
+```{r}
+summary(df)
+```
+
+
+```{r}
+library(ggplot2)
+df$Whistle <- as.factor(df$Whistle)
+ggplot(df, aes(x = Whistle, y = Duration)) + geom_boxplot()
+
+```
+```{r}
+num.df <- subset(df, select = -1)
+```
+
+
+```{r, warning=FALSE}
+library(ggcorrplot)
+corr_matrix <- cor(num.df)
+ggcorrplot(corr_matrix,
+           method = "square",
+           lab = TRUE,
+           lab_size = 3,  
+           lab_col = "black",   
+           hc.order = TRUE,
+           type = "upper",
+           tl.cex = 10,  
+           digits = 3,
+           title = "Correlation Matrix for Numerical Variables",
+           show.legend = TRUE)
+```
+
+
+```{r}
+ggplot(df, aes(x = Whistle, y = Max_Freq)) + geom_boxplot()
+```
+
+```{r}
+
+set.seed(8)
+s <- sample(1:nrow(df), 20)
+num.df <- subset(df, select = -1)
+subset.df <- num.df[s, ]
+```
+
+```{r}
+pr.out <- prcomp(num.df, scale = TRUE)
+pr.out$rotation[, 1:4]
+```
+
+
+```{r}
+biplot(pr.out, scale = 0)
+```
+Looking at the arrows in our biplot we can observe the representations of our variables. The first PC places most weight on Low_Freq. Low_Freq and and Duration variables are aligned almost exclusively to PC1. The remaining variables are at diagonals to the principal components meaning they share influence across both PCs and reflects their moderate correlation. The frequency related variables (Max_Freq, Center_Freq, Range_100) are clustered suggesting that these variables are positively correlated and hold similar contributions to this low dimensional representation.
+
+
+
+```{r}
+pca.df <- as.data.frame(pr.out$x)
+pca.df$Whistle <- df$Whistle
+ggplot(pca.df, aes(x = PC1, y = PC2, color = Whistle)) +
+  geom_point(size = 2) +
+  labs(title = "PCA Biplot Colored by Whistle Type",
+       x = "PC1", 
+       y = "PC2") +
+  theme_minimal()
+```
+
+Constant whistles appear slightly more concentrated along the lower edge of the PC2 axis, suggesting they may have lower variation in the features captured by PC2 which we determined is the opposite direction of the frequency variables and closer to the direction of Duration. This suggests that constant whistles may be characterised by longer durations but lower variation in frequency, distinguishing them from other whistle types.
+Upsweep and Sine are centralised in this visualisation and grow towards the right and left along the PC1 axis respectively and upwards along the PC2 axis. We could possibly determine that our Upsweep whistles are associated with higher frequencies that peak towards the midpoint of the whistle. Sine whistles on the other hand are more associated with longer duration and greater number of inflexions.
+Concave, Convex, and Downsweep whistles show moderate dispersion across both PC1 and PC2, with no clear separation, suggesting overlapping feature characteristics in the reduced space.
+
+
+# Snails dataset.
+In this segment, I am using the Snails dataset. This dataset contains 10 variables listed
+below
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+var_desc <- data.frame(
+  Variable = c("Location", "Aperture width (AW)", "Aperture length (AL)", "Circularity",
+               "N.Telochonc.Whorls", "Whorl.First.Primary", "N.Primary.Whorls",
+               "Whorl.Axial.Striae", "Whorl.Tertiary.Groove", "Whorl.Spiral.Striae"),
+  Description = c("Location of site",
+                  "Width of the opening into the shell",
+                  "Length of the opening into the shell",
+                  "AW / AL",
+                  "Number of whorls in the telochonch",
+                  "Whorl number in which first primary groove (PG) appears",
+                  "Number of primary whorls",
+                  "Whorl in which axial striae (AS) first appear",
+                  "Whorl in which tertiary grooves (TG) first appear",
+                  "Whorl in which spiral striae (SS) first appear")
+)
+
+kable(var_desc, caption = "Variable Descriptions", booktabs = TRUE, align = "l") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+
+
+
+```{r}
+snail.df <- read.csv("Snails_Dataset.csv", header = T)
+head(snail.df)
+```
+```{r}
+unique(snail.df$Location)
+```
+
+## Performing K-means clustering.
+
+Let's use k-means clustering to partition a low dimensional representation of our dataset into groups. To select an ideal k (number of groups) we plot a range of k's can using a scree plot to determine if a certain value for k causes within-cluster error
+to plateau significantly.
+
+```{r}
+num.df <- subset(snail.df, select = -1)
+pr.out <- prcomp(num.df, scale = TRUE) ## distance based method so we scale values
+
+
+pca.df <- as.data.frame(pr.out$x)
+```
+
+
+
+```{r}
+wss <- numeric()
+
+for (k in 1:20) {
+  km <- kmeans(pca.df, centers = k, nstart = 20)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:20, wss, type = "b",
+     xlab = "Number of Clusters (K)",
+     ylab = "Net Within-Cluster Sum of Squares (WSS)",
+     main = "Scree Plot for K Means")
+
+```
+
+There is no sharp tapering off in the plot but the rate of error becomes gradual after k = 3, therefore this will likely be our chosen k. 
+
+
+```{r}
+k <- 3
+km.out <- kmeans(pca.df, k, nstart = 20)
+```
+
+
+```{r}
+plot(pca.df$PC1, pca.df$PC2,
+col=(km.out$cluster), main=paste0("K-Means Clustering
+Results with K=",k), pch=20, cex=2)
+```
+
+Let's now make a biplot to determine if certain variables are more closely associated with our clusters.
+
+```{r}
+biplot(pr.out, scale = 0)
+```
+When contrasting plots we can see distinct variations in snails appear in our groups based differences in physical attributes. Our PC2 dimension holds significant weight in aperture length and width. Our k-means cluster has identified a potential type of sub species (green cluster) of snail which had smaller apertures on average. Our red cluster was also associated with key characteristics - such as Circularity, N.Primary.Whorls and Whorl.Axial.Striae. This cluster of snail share distinct features such as consistent aperture width/length ratio, a larger number primary whorls and axial striae appearing on the same whorl. This provides potential evidence for a different sub species of snail. Our black cluster group are associated with N.Telochonc.Whorls, Whorl.Spiral.Striae and Whorl.Tertiary.Groove. Black cluster snails saw similar shell location for spiral striae and tertiary groove as well as a greater number of whorls in the telochonch. These consistent yet distinct shell features hint at another snail subspecies.
+
+It is important to note that k-means does not provide a true classification or confirmation of biological subspecies, but rather an unsupervised grouping based on patterns in the data. Further validation, such as genetic analysis or expert assessment, would be required to confirm whether these clusters correspond to distinct taxonomic groups however we have made strong use of an exploratory tool.
+
+## Hierarchical clustering.
+
+Let's create some dendrograms using hierarchical clustering and the Location variable as our identifier.
+
+```{r}
+set.seed(50)
+n <- 100
+s <- sample(nrow(num.df), n)
+
+sample.df <- num.df[s, ]
+```
+
+```{r}
+scale.df <- scale(sample.df)
+snail.labels <- snail.df[s,]$Location               
+dist.data <- dist(sample.df)                        
+
+
+hc1 <- hclust(dist.data, method = "complete")
+```
+
+```{r, warning=FALSE}
+library(dendextend)
+
+dend <- as.dendrogram(hc1)
+labels(dend) <- snail.labels
+
+pdf("dendrogram1.pdf", width = 20, height = 15)
+dend %>% 
+  set("leaves_pch", 19) %>% 
+  set("leaves_cex", 2) %>% 
+  set("leaves_col", 2) %>% # adjust the leaves
+  hang.dendrogram(hang_height = .6) %>% # hang the leaves
+   plot(main = "Hierarchical Clustering with Complete Linkage",  ylim = c(0, 20))
+dev.off()
+
+```
+
+There are several key insights from the hierarchical clustering analysis of snail samples:
+A large portion of the observations cluster tightly near the base of the dendrogram, suggesting low overall variability in snail features across geographic locations.
+At a finer scale, snails tend to group consistently within their respective locations, indicating intralocation similarity in shell characteristics.
+Several snails from African regions cluster together closely specifically Angola, Ghana, and Sierra Leone clustered closely indicating intralocation similarity.
+Snails from the Americas (Bahamas, Jamaica, and Cuba) also formed tight clusters, Jamaicas specifically with itself, indicating morphological consistency across those locations.
+Florida snails exhibited the largest number of observations and the broadest spread, of dissimilarity range suggesting greater morphological diversity in this state.
+Notably, outlier observations were found in Belize and Principe, many of the Belize snails merged higher up indicating 
+where snails displayed substantial divergence from all other clusters.
+
+
+
+Let's change the distance measurement to account for correlation and then plot another hierarchical cluster.
+```{r}
+hc2 <- hclust(dist.data, method = "single")
+dend <- as.dendrogram(hc2)
+labels(dend) <- snail.labels
+
+pdf("dendrogram2.pdf", width = 20, height = 15)
+dend %>% 
+  set("leaves_pch", 19) %>% 
+  set("leaves_cex", 2) %>% 
+  set("leaves_col", 2) %>% # adjust the leaves
+  hang.dendrogram(hang_height = .6) %>% # hang the leaves
+   plot(main = "Hierarchical Clustering with Single Linkage", ylim = c(0, 20))
+dev.off()
+```
+
+There are several key insights from the hierarchical clustering analysis of snail samples using single linkage. A large proportion of the observations cluster tightly near the base of the dendrogram, indicating generally low morphological variability across geographic locations. Due to the chaining effect inherent in single linkage, many samples are progressively merged based on minimal pairwise dissimilarities, which gives us less distinct clusters than our complete linkage. Nonetheless, some regional patterns are apparent. 
+Snails from Sierra Leone frequently clustered closely, suggesting strong intralocation similarity, with Angola and Ghana also showing local cohesion in parts of the dendrogram. Jamaica exhibited consistent clustering within its own samples.
+In contrast, Florida snails were widely distributed throughout the tree and merged at varying heights, indicating variations within that population. Several samples from Belize merged at relatively higher distance levels, highlighting their distinctiveness, while snails from Principe also appeared as clear outliers like in our previous visualisation.

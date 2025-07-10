@@ -1,0 +1,257 @@
+---
+title: "Regression models to predict reproductive rates, movie sales and energy consumption."
+subtitle: "Bootstrapping | Stepwise Selection | Shrinkage Methods"
+author: "Ben Murarotto"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+    highlight: tango
+header-includes:
+  - \usepackage{xcolor}
+  - \definecolor{linkedinblue}{RGB}{0, 119, 181}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhead[CO,CE]{}
+  - \fancyfoot[CO,CE]{\color{linkedinblue}\small Ben Murarotto | LinkedIn}
+geometry: margin=0.75in
+urlcolor: linkedinblue
+---
+
+# Aphid Dataset
+The aphid dataset contains records of the number of eggs produced on three different days
+by each of the 20 aphids. The reproductive rate of a species can be defined as:
+
+$$
+R_0 = {\sum}_{x=0}^{\infty}(l_xm_x)
+$$
+where lx is the proportion of females surviving to each age, and mx is the average number
+of offspring produced at each age.
+
+Here I created a function to calculate R0 for the population:
+
+```{r}
+
+rep.fn <- function(data, index) {
+  l = data$l[index]
+  m = data$m[index]
+  return(sum(l*m))
+
+}
+
+```
+
+## Bootstrapping for resampling
+Since our dataset contains a small sample size of 20 observations, let us resample with replacement to better understand range of the true mean rate and variability.
+
+```{r}
+aphid.df <- read.csv("Aphid.csv", header = T)
+
+eggs.df <- subset(aphid.df, select = -ID)
+m <- c()
+l <- c()
+for (col in colnames(eggs.df)){
+  m <-  c(m, (sum(eggs.df[[col]])/sum(eggs.df[[col]] != 0)))
+  l <- c(l, (sum(eggs.df[[col]] != 0)/nrow(eggs.df)))
+
+}
+boot.df <- data.frame(m=m, l=l)
+```
+```{r}
+library(boot)
+
+set.seed(1)  # for reproducibility
+boot.result <- boot(data = boot.df, statistic = rep.fn, R = 100000)
+
+print(boot.result$t0)                
+print(sd(boot.result$t))        
+print(boot.ci(boot.result, type = "perc"))
+
+
+
+```
+
+Based on our resampling, we are 95% certain that the true reproductive rate lies between 10.8 and 12.6 offspring per day.
+
+# Hollywood Dataset
+The dataset Hollywood contains information about 10 movie releases. There are 4 variables:
+Receipts = first year box office receipts/millions
+Production = total production costs/millions
+Promo = total promotional costs/millions
+Books = total book sales/millions
+
+## Fitting linear regression.
+We are attempting to fit a linear regression model to predict number of receipts based on the 3 sales variables.
+
+First we will fit and test the full model.
+
+```{r}
+hwood.df <- read.csv("Hollywood.csv", header=T)
+
+hwood.lm <- lm(Receipts ~ Production + Promo + Books ,data=hwood.df)
+summary(hwood.lm)
+
+newdata <- data.frame(
+  Production = 7,
+  Promo = 7,
+  Books = 10
+)
+
+prediction1 <- predict(hwood.lm, newdata = newdata, interval = "confidence")
+
+prediction1
+```
+
+
+Here we have a confidence interval between 81.06 and 108.79 however we should cast some skepticism on this range due to the poor health of our dataset which only contains 10 observations.
+
+## Bootstrapping for resampling.
+Lets create a bootstrapping function that takes the dataframe, an index and the prediction data to create a better estimate for said prediction.
+
+```{r, message=F, warning=F}
+boot.fn <- function(data, index, newdata){
+  model <- lm(Receipts ~ Production + Promo + Books, data = data[index, ])
+  prediction <- predict(model, newdata = newdata)
+  return(prediction)
+}
+library(boot)
+results <- boot(data = hwood.df, statistic = boot.fn, R = 10000, newdata = newdata)
+boot.ci(results, type = "perc")
+se <- sd(results$t)
+print(se)
+
+t0 <- prediction1[1]
+moe <- 1.96*se
+upper <- t0 + moe
+lower <- t0 - moe
+
+print(prediction1)
+cat("The 95% CI for our statistic using bootstrapped standard error is: \n", lower, upper)
+
+```
+
+We can see that there is a drastic difference between the dataset prediction range and the bootstrapped range for the prediction. The bootstrapped range is more conservative to account for greater variation in the coefficient estimates and provides a more realistic range for a true result.
+
+#  Energy Dataset
+In this dataset, we’ll predict appliances energy consumption in the energy dataset. The data include measurements of temperature and humidity sensors from a wireless network,
+weather from a nearby airport station and recorded energy use of lighting fixtures.
+
+## Preparing for cross-validation.
+
+We are going to do some processing of the dataframe and create a random 50/50 train/test split.
+```{r}
+energy.df <- read.csv("Energy.csv")
+set.seed(1)
+n <- floor(0.5 * nrow(energy.df))
+index <- sample(seq_len(nrow(energy.df)), size = n)
+
+train <- energy.df[index, ]
+test  <- energy.df[-index, ]
+train_subset <- subset(train, select = -c(date))
+test_subset <- subset(test, select = -c(date))
+```
+
+
+## Fitting a linear model.
+Let's fit a linear model using least squares on the training set using all predictors, and assess the test error obtained.
+
+```{r}
+mod1 <- lm(data = train_subset, Appliances ~ .)
+coefficients(mod1)
+summary(mod1)
+```
+```{r}
+full.mod.prediction <- predict(mod1, newdata = test_subset)
+y_test <- test_subset$Appliances
+mse.full.mod <- mean((full.mod.prediction-y_test)^2)
+
+cat("Test Error for full linear model: \n", mse.full.mod)
+```
+
+
+## Stepwise selection of predictors.
+Let's use stepwise selection to optimise the model. We are going to use backwards selection and work back from the model we just created.
+
+```{r}
+library(leaps)
+regfit.bwd <- regsubsets(Appliances ~ .,data=train_subset, nvmax = 25, method = "backward")
+reg.summary <- summary(regfit.bwd)
+
+par(mfrow=c(2,2))
+plot(reg.summary$cp ,xlab="Number of Variables ",ylab="Cp", type="l")
+plot(reg.summary$bic,xlab="Number of Variables ",ylab="bic", type="l")
+plot(reg.summary$rss ,xlab="Number of Variables ",ylab="rss", type="l")
+plot(reg.summary$adjr2 ,xlab="Number of Variables ",ylab="AdjustedRsq", type="l")
+
+```
+
+Based on our plots of model selection metrics, we see that the steepest change occurs around the 8-10 variable mark. We should then fit a regression model using the ideal 9 predictors and then validate it on the test data.
+
+```{r}
+coef(regfit.bwd ,9)
+best_vars <- names(coef(regfit.bwd, 9))[-1]
+formula_str <- paste("Appliances ~", paste(best_vars, collapse = " + "))
+formula_final <- as.formula(formula_str)
+final.lm <- lm(data = train_subset, formula_final)
+pred.final <- predict(final.lm, newdata = test_subset)
+
+y_test <- test_subset$Appliances
+lm_mse <- mean((pred.final - y_test)^2)
+cat("Mean MSE for Final LM: ", lm_mse)
+```
+## Fitting a ridge regression model.
+
+Now we're going to fit a ridge regression model on the training set, with lambda chosen by cross-validation.
+
+
+```{r}
+library(glmnet)
+x_train=model.matrix(Appliances~., data=train_subset)[,-1]
+y_train=train_subset$Appliances
+x_test <- model.matrix(Appliances ~ ., data = test_subset)[,-1]
+y_test <- test_subset$Appliances
+
+
+grid <- 10^seq(5, -2, length = 100)
+ridge_cv <- cv.glmnet(x_train, y_train, alpha = 0, lambda = grid)
+best_lambda_ridge <- ridge_cv$lambda.min
+
+ridge_pred <- predict(ridge_cv, s = best_lambda_ridge, newx = x_test)
+ridge_mse <- mean((ridge_pred - y_test)^2)
+
+cat("Ridge Regression Test MSE:", ridge_mse, "\n")
+cat("Ridge Regression Best Lambda", best_lambda_ridge, "\n")
+plot(ridge_cv)
+```
+
+## Fitting a LASSO model.
+
+Using a similar code structure we can create a LASSO model on the training set, with lambda chosen by cross-validation. 
+
+```{r}
+lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, lambda = grid)
+best_lambda_lasso <- lasso_cv$lambda.min
+
+lasso_pred <- predict(lasso_cv, s = best_lambda_lasso, newx = x_test)
+lasso_mse <- mean((lasso_pred - y_test)^2)
+
+lasso_coef <- predict(lasso_cv, s = best_lambda_lasso, type = "coefficients")
+nonzero_coef <- sum(lasso_coef != 0) - 1
+
+plot(lasso_cv)
+cat("Lasso Test MSE:", lasso_mse, "\n")
+cat("Ridge Regression Best Lambda", best_lambda_lasso, "\n")
+cat("Number of non-zero coefficients:", nonzero_coef, "\n")
+```
+
+```{r}
+cat("Full model MSE: ", mse.full.mod,"\n") 
+cat("Stepwise model MSE: ", lm_mse,"\n") 
+cat("Ridge model MSE: ", ridge_mse,"\n") 
+cat("LASSO model MSE: ", lasso_mse,"\n")
+
+```
+All four models produced very similar test mean squared errors, all around 8730–8810. The full model and the LASSO model had the lowest test errors (8734.34 and 8733.73, respectively), while stepwise selection performed slightly worse. 
+
+This may indicate that the predictors in the dataset are informative and not overly collinear. While LASSO offers the added benefit of variable selection, the overall accuracy of all models is quite similar. In conclusion, any of the models could be considered appropriate, with a slight preference for LASSO.

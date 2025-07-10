@@ -1,0 +1,380 @@
+---
+title: "STAT430 Assignment 3."
+subtitle: "Tree-based Methods | SVMs"
+author: "Ben Murarotto"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+    highlight: tango
+header-includes:
+  - \usepackage{xcolor}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhead[CO,CE]{}
+geometry: margin=0.75in
+---
+# Chatter dataset.
+The activities of the instant chat function on a company website were reviewed to identify
+key features that allowed a given query to be *successfully resolved*. The dataset Chatter.csv
+contains the following variables:
+
+*Worker*: 10 point self-assessment score on session given by the employee
+*Max_msg*: Maximum number of characters used in any message
+*Min_msg*: Minimum number of characters used in any message
+*Exchanges*: The total number of messages exchanged during the session
+*Total_time*: Total time the customer was active for
+*Time_length*: Average time (in secs) customer waited for a response from the employee
+*Age_client*: Age of the customer
+*Resolved*: Whether the customer considered the issue resolved (“No” or “Yes”)
+
+
+
+```{r}
+library(tree)
+library(ggplot2)
+library(gridExtra)
+chatter.df <- read.csv("Chatter.csv", header = T)
+summary(chatter.df)
+unique(chatter.df$Resolved)
+table(chatter.df$Resolved)
+```
+Initial exploratory analysis reveals we are dealing with observations that have exclusively numeric data and one Y/N resolved classifier which is our parameter of interest.
+
+```{r}
+colSums(is.na(chatter.df))
+```
+All of our observations have recorded data for each variable which is ideal. We will change the Resolved category to a factor.
+
+```{r}
+chatter.df$Resolved <- as.factor(chatter.df$Resolved)
+```
+
+Let's make a correlation plot to try and better understand the context of our variables.
+
+```{r}
+library(ggcorrplot)
+chatter_numeric <- subset(chatter.df, select = -Resolved)
+corr_matrix <- cor(chatter_numeric)
+ggcorrplot(corr_matrix,
+           method = "square",
+           lab = TRUE,
+           lab_size = 3,        # Control label size
+           lab_col = "black",   # Ensure contrast with tiles
+           hc.order = TRUE,
+           type = "upper",
+           tl.cex = 10,  
+           digits = 3,
+           title = "Correlation Matrix for Numerical Variables",
+           show.legend = TRUE)
+
+```
+There are a few relationships of note however most variables are very weakly correlated.
+Older clients tend to receive higher employee self-assessment scores. 
+
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+param_of_interest = list('Worker', "Max_msg", "Total_time", "Age_client")
+i <- 1
+plots <- list()
+for (param in param_of_interest) {
+  plots[[i]] <- ggplot(chatter.df, aes(x = Resolved, y = .data[[param]])) + 
+    geom_boxplot() +
+    ggtitle(param)
+  i <- i + 1
+}
+
+do.call(grid.arrange, c(plots, ncol = 2))
+```
+
+## Creating a train/test split
+Using an 80:20 train:test split, we are going to create a decision tree for the Chatter dataset. 
+
+
+```{r}
+set.seed(6969)
+nrowdf <- nrow(chatter.df)
+train<-sample(1:nrowdf, 0.8*nrowdf)
+chatter.train <- chatter.df[train, ]
+chatter.test <- chatter.df[-train, ]
+tree.chatter <- tree(Resolved ~., data=chatter.train)
+```
+
+
+```{r}
+summary(tree.chatter)
+```
+
+```{r}
+plot(tree.chatter)
+text(tree.chatter, pretty = 1, cex = 0.7)
+```
+
+Our tree here has 14 terminal nodes and is highly complex, it is likely picking up a lot of noise from the training data and we should see it underperform when we fit our predictions.
+
+```{r}
+tree.pred <- predict(tree.chatter, chatter.test, type="class")
+tree.tab<-table(tree.pred, chatter.test$Resolved)
+tree.tab
+```
+
+
+```{r}
+(tree.tab[1,1] + tree.tab[2,2])/sum(tree.tab)
+```
+
+
+## Tree Pruning.
+We want to use cv.tree() function to decide the complexity level of our tree based on classification error.
+
+
+```{r}
+RNGversion("3.5") 
+set.seed(9)
+cv.chatter <- cv.tree(tree.chatter, FUN=prune.misclass)
+cv.chatter
+```
+From our overview, we see that the pruned tree with size 5 had the lowest test score (dev) in this case which is classification error of 173, however lets plot the CV error.
+
+```{r}
+plot(cv.chatter$size,cv.chatter$dev, type="b", xlab="Tree Size", ylab="Misclassification Error",
+     main="CV Error vs Tree Size")
+
+plot(cv.chatter$k,cv.chatter$dev, type="b", xlab="Complexity (Alpha)", ylab="Misclassification Error",
+     main="CV Error vs Complexity Parameter")
+```
+
+
+```{r}
+prune.chatter <- prune.misclass(tree.chatter, best=5)
+plot(prune.chatter)
+text(prune.chatter, pretty = 1, cex = 0.7)
+```
+Let's apply our predictions to our pruned tree and look at it's accuracy matrix.
+
+```{r}
+prune.pred <- predict(prune.chatter, chatter.test, type="class")
+prune.tab<-table(prune.pred, chatter.test$Resolved)
+prune.tab
+```
+
+```{r}
+(prune.tab[1,1] + prune.tab[2,2])/sum(prune.tab)
+```
+
+## Implementing a random forest.
+When implementing a random forest, we tune the number of variables randomly selected from the total set of predictors to consider at each split in a decision tree.
+```{r}
+library(randomForest)
+library(caret)
+
+set.seed(42)
+
+
+folds <- createFolds(chatter.df$Resolved, k = 10, list = TRUE)
+
+
+ntree <- 300
+node_size <- c(3, 8, 10, 15, 20)
+
+results <- data.frame()
+
+# Loop over each parameter combo
+for (param_i in 1:length(node_size)) {
+  fold_accuracies <- c()
+  
+  for (fold_i in 1:10) {
+    test_indices <- folds[[fold_i]]
+    train_data <- chatter.df[-test_indices, ]
+    test_data <- chatter.df[test_indices, ]
+    
+    # Train random forest with this param combo
+    rf_model <- randomForest(Resolved ~ ., 
+                             data = train_data,
+                             mtry = 3,
+                             ntree = ntree,
+                             nodesize = node_size[param_i])
+    
+    preds <- predict(rf_model, test_data)
+    acc <- mean(preds == test_data$Resolved)
+    fold_accuracies <- c(fold_accuracies, acc)
+  }
+  
+  results <- rbind(results, data.frame(
+    nodesize = node_size[param_i],
+    ntree = ntree,
+    mtry = 3,
+    mean_accuracy = mean(fold_accuracies)
+  ))
+}
+```
+
+
+```{r}
+results$combo <- paste0("Combo ", 1:nrow(results))
+
+ggplot(results, aes(x = combo, y = mean_accuracy)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "CV Accuracy by Parameter Combo",
+       x = "Parameter Combination",
+       y = "Mean Accuracy") +
+  theme_minimal()
+
+
+
+```
+
+I tested a variety of combinations of ntree and node_size and found that adjusting the parameters showed little variance in CV accuracy. Most of the forests ended up having a mean accuracy of approximately 80%. For this reason a random forest with less complexity will be used for our final forest. Combo 1 with nodesize 3 and ntrees 300.
+
+```{r}
+final.forest <- randomForest(Resolved ~ ., 
+                             data = chatter.train,
+                             mtry = 3,
+                             ntree = ntree,
+                             nodesize = 3
+  
+)
+
+forest.pred <- predict(final.forest, chatter.test, type="class")
+forest.tab <- table(forest.pred, chatter.test$Resolved)
+forest.tab
+```
+
+```{r}
+(forest.tab[1,1] + forest.tab[2,2])/sum(forest.tab)
+```
+### Final evaluations.
+After tuning nodesize using 10-fold cross-validation on the full chatter.df dataset and fixing mtry = 3, ntree = 300, the best-performing model used nodesize = 8. This model was then retrained on the full training set and evaluated on the hold-out test set. This model scored an 86% accuracy on the test set. This is a marginal improvement from our pruned tree which had 75% accuracy!
+
+# Diabetes dataset.
+Researchers wanted to investigate whether patients show signs of diabetes according to
+certain criteria. Data for 768 women are stored in the file diabetesNA.csv. The variables
+are:
+
+*PREG*: Number of times pregnant
+*PGC*: Plasma glucose concentration a 2 hours in an oral glucose tolerance test
+*DBP*: Diastolic blood pressure (mm Hg)
+*THICK*: Triceps skin fold thickness (mm)
+*INS*: 2-Hour serum insulin (µU/ml)
+*BMI*: Body mass index
+*PED*: Diabetes pedigree function
+*AGE*: Age (years)
+*DIAB*: Binary response (0: no diabetes; 1: diabetes)
+
+## Exploratory analysis.
+
+```{r}
+db.df <- read.csv("diabetesNA.csv", header = T)
+colSums(is.na(db.df))
+```
+```{r}
+summary(db.df)
+```
+
+
+All of our variables are numeric besides our binary classifier variable DIAB. Since SVM's are distance based classification tools we need to ensure all quantitiative data is scaled to a Z-score.First we should the scale the data and also revert the binary classifier into a factor with 2 levels.
+
+```{r}
+
+predictors_standardised <- scale(db.df[, -9])
+standard.df <- data.frame(predictors_standardised, DIAB = as.factor(db.df$DIAB))
+```
+
+```{r}
+library(ggplot2)
+library(GGally)
+
+# Pairwise scatterplots + density
+ggpairs(standard.df[, c("PGC", "BMI", "AGE", "DIAB")], 
+        aes(color = DIAB, alpha = 0.5)) +
+  theme_bw()
+```
+
+These density plots tell us critical information about the relationship of our predictors as to how they pertain to a diabetic diagnosis. The density plots are overlapping and not unimodal indicating there are likely (multidimensional) polynomial relationships. The kernel function type which we select to find our ideal boundary lines for SVMs affects the way our model separates the data points. Based on this knowledge we will likely be fitting a polynomial or radial kernel function.
+
+## Creating a train/test split.
+We are going to use a 60/40 split to train and validate our SVM.
+
+```{r}
+set.seed(69)
+nrowdf <- nrow(standard.df)
+trainsplit <- sample(1:nrowdf, 0.6*nrowdf)
+train_data <- standard.df[trainsplit, ]
+test_data <- standard.df[-trainsplit, ]
+
+comp_test <- test_data[complete.cases(test_data), ]
+
+```
+
+## Fitting an initial SVM.
+
+```{r}
+library(e1071)
+svm_poly <- tune(
+  svm,
+  DIAB ~ .,
+  data = train_data,
+  kernel = "polynomial",
+  na.action = na.omit,
+  ranges = list(
+    cost = c(0.1, 1, 10, 100),
+    gamma = c(0.01, 0.1, 1) 
+  )
+)
+```
+
+```{r}
+svm_radial <- tune(
+  svm,
+  DIAB ~ .,
+  data = train_data,
+  kernel = "radial",
+  na.action = na.omit,
+  ranges = list(
+    cost = c(0.1, 1, 10, 100),
+    gamma = c(0.01, 0.1, 1) 
+  )
+)
+```
+
+
+```{r}
+svm_radial$best.performance
+svm_poly$best.performance
+```
+
+
+
+It turns out our best performing SVM used a radial kernel leading to least error after cross validation.
+
+```{r}
+pred_scores <- predict(
+  svm_radial$best.model, 
+  newdata = comp_test,
+  decision.values = TRUE
+)
+decision_values <- attributes(pred_scores)$decision.values
+```
+
+
+
+## Calculating a confusion matrix.
+
+```{r}
+pred = predict(svm_radial$best.model, newdata = comp_test)
+conf_matrix <- table(
+  true = comp_test$DIAB,
+  pred = pred
+)
+
+conf_matrix
+```
+
+```{r}
+(conf_matrix[1,1] + conf_matrix[2,2]) / sum(conf_matrix)
+```
+
+Our final SVM had a true prediction rate of 73% on the test set. We clearly notice an imbalance in class detection percentages. While the model correctly identifies 96 non-diabetic cases, it misses 50% of diabetic cases and incorrectly flags 21 non-diabetic individuals as diabetic. These factors compromise its clinical utility for diabetes diagnosis.
